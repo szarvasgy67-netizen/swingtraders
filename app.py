@@ -179,3 +179,42 @@ with col_right:
             st.warning("⚠️ Egy pozícióba a tőkéd több mint 45%-át tennéd! Húzd kijjebb a stopot vagy csökkentsd a darabszámot.")
     else:
         st.error("A belépő árnak nagyobbnak kell lennie a Stop-Loss árnál!")
+st.divider()
+
+# 4. AKTÍV POZÍCIÓK FIGYELŐJE (TIME-STOP & EARNINGS PAJZS)
+st.subheader("4. Aktív Pozíciók & Pajzs (Time-Stop + Hírradar)")
+st.caption("Írd be a jelenleg nyitott pozícióidat (vagy tesztelj egyet), és az app figyeli a 10 napos időkorlátot és a veszélyes híreket.")
+
+# Egyszerű szerkeszthető táblázat a nyitott kötéseidhez
+default_positions = pd.DataFrame([
+    {"Ticker": "ADBE", "Belépő ($)": 480.0, "Belépés dátuma": "2026-11-10"},
+    {"Ticker": "NVDA", "Belépő ($)": 142.0, "Belépés dátuma": "2026-11-20"},
+])
+
+edited_df = st.data_editor(default_positions, num_rows="dynamic", use_container_width=True)
+
+if st.button("🛡️ Pozíciók és Hírek ellenőrzése"):
+    status_rows = []
+    for _, row in edited_df.iterrows():
+        t = str(row["Ticker"]).strip().upper()
+        if t and pd.notna(row["Belépő ($)"]) and pd.notna(row["Belépés dátuma"]):
+            res = guards.check_position_status(t, float(row["Belépő ($)"]), str(row["Belépés dátuma"]))
+            if res:
+                status_rows.append(res)
+                
+    if status_rows:
+        st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+        
+        # Hírfigyelő az aktív részvényekhez
+        st.markdown("#### 📡 Friss Hírradar a tartott részvényekhez")
+        for r in status_rows:
+            with st.expander(f"{r['Ticker']} – Legfrissebb hírek"):
+                news = guards.scan_breaking_news(r["Ticker"])
+                if news:
+                    for n in news:
+                        if "PIROS ZÁSZLÓ" in n:
+                            st.error(n)
+                        else:
+                            st.write(n)
+                else:
+                    st.write("Nincs friss hír.")
