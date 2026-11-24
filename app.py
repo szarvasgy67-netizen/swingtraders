@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import config
+from modules import guards
+
 
 st.set_page_config(page_title="Swingtrader Co-Pilot", page_icon="📈", layout="wide")
 
