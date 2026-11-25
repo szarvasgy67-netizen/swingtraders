@@ -1,3 +1,122 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime, date
+import config
+
+st.set_page_config(page_title="Swingtrader Co-Pilot", page_icon="📈", layout="wide")
+
+RED_FLAG_KEYWORDS = [
+    "ceo", "resign", "step down", "steps down", "depart", 
+    "guidance", "cut", "lower", "miss", "misses", "sec", 
+    "investigation", "lawsuit", "downgrade", "halt"
+]
+
+@st.cache_data(ttl=3600)
+def get_usdhuf():
+    try:
+        df = yf.download("HUF=X", period="5d", progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return float(df["Close"].iloc[-1])
+    except Exception:
+        return 385.0
+
+@st.cache_data(ttl=1800)
+def analyze_market_regime():
+    results = {}
+    for ticker in config.BENCHMARK_TICKERS:
+        df = yf.download(ticker, period="6mo", progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        
+        df["SMA20"] = df["Close"].rolling(20).mean()
+        df["SMA50"] = df["Close"].rolling(50).mean()
+        
+        last_close = float(df["Close"].iloc[-1])
+        sma20 = float(df["SMA20"].iloc[-1])
+        sma50 = float(df["SMA50"].iloc[-1])
+        sma20_slope = (sma20 - float(df["SMA20"].iloc[-5])) / float(df["SMA20"].iloc[-5]) * 100
+        
+        if last_close > sma20 > sma50 and sma20_slope > 0.2:
+            regime = "🟢 TRENDELŐ (Zöld lámpa - 100% tőke)"
+        elif last_close > sma50:
+            regime = "🟡 ÓVATOS / VEGYES (Sárga - 50% tőke)"
+        else:
+            regime = "🔴 OLDALAZÓ / ESŐ (Piros - Ne erőltesd!)"
+            
+        results[ticker] = {
+            "price": last_close,
+            "sma20": sma20,
+            "sma50": sma50,
+            "slope": sma20_slope,
+            "regime": regime
+        }
+    return results
+
+@st.cache_data(ttl=1800)
+def scan_watchlist(tickers):
+    candidates = []
+    for t in tickers:
+        try:
+            df = yf.download(t, period="6mo", progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if len(df) < 60:
+                continue
+                
+            df["SMA20"] = df["Close"].rolling(20).mean()
+            df["SMA50"] = df["Close"].rolling(50).mean()
+            
+            delta = df["Close"].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            df["RSI"] = 100 - (100 / (1 + rs))
+            
+            high_low = df["High"] - df["Low"]
+            high_close = np.abs(df["High"] - df["Close"].shift())
+            low_close = np.abs(df["Low"] - df["Close"].shift())
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            df["ATR"] = tr.rolling(14).mean()
+            
+            close = float(df["Close"].iloc[-1])
+            sma20 = float(df["SMA20"].iloc[-1])
+            sma50 = float(df["SMA50"].iloc[-1])
+            rsi = float(df["RSI"].iloc[-1])
+            atr_pct = (float(df["ATR"].iloc[-1]) / close) * 100
+            dist_sma20 = ((close - sma20) / sma20) * 100
+            
+            if close > sma50 and abs(dist_sma20) <= 3.5 and atr_pct >= 1.8:
+                setup = "🎯 Visszahúzás SMA20-hoz"
+            elif close > sma20 > sma50 and 50 <= rsi <= 68:
+                setup = "🚀 Lendület (Momentum)"
+            else:
+                setup = "⚪ Várakozás"
+                
+            candidates.append({
+                "Ticker": t,
+                "Ár ($)": round(close, 2),
+                "Setup": setup,
+                "RSI (14)": round(rsi, 1),
+                "SMA20 táv (%)": round(dist_sma20, 2),
+                "Napi mozgás ATR (%)": round(atr_pct, 2)
+            })
+        except Exception:
+            continue
+    return pd.DataFrame(candidates)
+
+@st.cache_data(ttl=900)
+def get_chart_data(ticker):
+    df_c = yf.download(ticker, period="4mo", progress=False)
+    if isinstance(df_c.columns, pd.MultiIndex):
+        df_c.columns = df_c.columns.get_level_values(0)
+    df_c["SMA20"] = df_c["Close"].rolling(20).mean()
+    df_c["SMA50"] = df_c["Close"].rolling(50).mean()
+    return df_c
+
 def check_position_status(ticker, entry_price, entry_date_str):
     try:
         stock = yf.Ticker(ticker)
