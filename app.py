@@ -51,32 +51,58 @@ def scan_watchlist(tickers):
     candidates = []
     for t in tickers:
         try:
-            df = yf.download(t, period="6mo", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
+            stock = yf.Ticker(t)
+            df = stock.history(period="6mo")
             if len(df) < 60:
                 continue
             df["SMA20"] = df["Close"].rolling(20).mean()
             df["SMA50"] = df["Close"].rolling(50).mean()
+            df["VOL20"] = df["Volume"].rolling(20).mean()
+            
             delta = df["Close"].diff()
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             df["RSI"] = 100 - (100 / (1 + (gain / loss)))
+            
             tr = pd.concat([df["High"] - df["Low"], np.abs(df["High"] - df["Close"].shift()), np.abs(df["Low"] - df["Close"].shift())], axis=1).max(axis=1)
             df["ATR"] = tr.rolling(14).mean()
-            close, sma20, sma50, rsi = float(df["Close"].iloc[-1]), float(df["SMA20"].iloc[-1]), float(df["SMA50"].iloc[-1]), float(df["RSI"].iloc[-1])
+            
+            close, sma20, sma50 = float(df["Close"].iloc[-1]), float(df["SMA20"].iloc[-1]), float(df["SMA50"].iloc[-1])
+            rsi = float(df["RSI"].iloc[-1])
             atr_pct = (float(df["ATR"].iloc[-1]) / close) * 100
             dist_sma20 = ((close - sma20) / sma20) * 100
-            if close > sma50 and abs(dist_sma20) <= 3.5 and atr_pct >= 1.8:
+            rvol = float(df["Volume"].iloc[-1]) / float(df["VOL20"].iloc[-1]) if float(df["VOL20"].iloc[-1]) > 0 else 1.0
+            
+            # Fundamentális mutatók (P/E, Forward P/E, Bevételnövekedés)
+            info = stock.info or {}
+            pe = info.get("trailingPE")
+            f_pe = info.get("forwardPE")
+            rev_g = info.get("revenueGrowth")
+            
+            if rvol >= 1.5 and close > sma20 > sma50:
+                setup = "🔥 Forgalom-robbanás!"
+            elif close > sma50 and abs(dist_sma20) <= 3.5 and atr_pct >= 1.8:
                 setup = "🎯 Visszahúzás SMA20-hoz"
             elif close > sma20 > sma50 and 50 <= rsi <= 68:
                 setup = "🚀 Lendület (Momentum)"
             else:
                 setup = "⚪ Várakozás"
-            candidates.append({"Ticker": t, "Ár ($)": round(close, 2), "Setup": setup, "RSI (14)": round(rsi, 1), "SMA20 táv (%)": round(dist_sma20, 2), "Napi mozgás ATR (%)": round(atr_pct, 2)})
+                
+            candidates.append({
+                "Ticker": t,
+                "Ár ($)": round(close, 2),
+                "Setup": setup,
+                "RVOL (x)": round(rvol, 2),
+                "P/E": round(pe, 1) if pe else None,
+                "Fwd P/E": round(f_pe, 1) if f_pe else None,
+                "Bev. nő (%)": round(rev_g * 100, 1) if rev_g else None,
+                "RSI (14)": round(rsi, 1),
+                "ATR (%)": round(atr_pct, 2)
+            })
         except Exception:
             continue
     return pd.DataFrame(candidates)
+
 @st.cache_data(ttl=900)
 def get_chart_data(ticker):
     df_c = yf.download(ticker, period="4mo", progress=False)
